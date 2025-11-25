@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -112,7 +113,12 @@ func runScenario(client *http.Client, sc scenario) {
 	printMetrics(metrics, elapsed)
 }
 
-func runWorkers(ctx context.Context, client *http.Client, build func(ctx context.Context, iter uint64) (*http.Request, error), m *metrics) {
+func runWorkers(
+	ctx context.Context,
+	client *http.Client,
+	build func(ctx context.Context, iter uint64) (*http.Request, error),
+	m *metrics,
+) {
 	var wg sync.WaitGroup
 	var iter uint64
 	for i := 0; i < concurrency; i++ {
@@ -151,13 +157,13 @@ func printMetrics(m *metrics, elapsed time.Duration) {
 	fail := atomic.LoadUint64(&m.errs)
 	rps := float64(total) / elapsed.Seconds()
 
-	min, max, p50, p95, p99 := latencyStats(m.latencies)
+	minDur, maxDur, p50, p95, p99 := latencyStats(m.latencies)
 
 	fmt.Printf("Duration: %s, Concurrency: %d\n", elapsed.Round(time.Millisecond), concurrency)
 	fmt.Printf("Total requests: %d\n", total)
 	fmt.Printf("Errors/5xx: %d\n", fail)
 	fmt.Printf("RPS: %.2f\n", rps)
-	fmt.Printf("Latency: min=%s, max=%s, p50=%s, p95=%s, p99=%s\n", min, max, p50, p95, p99)
+	fmt.Printf("Latency: min=%s, max=%s, p50=%s, p95=%s, p99=%s\n", minDur, maxDur, p50, p95, p99)
 
 	if len(m.statuses) > 0 {
 		fmt.Println("Status codes:")
@@ -173,13 +179,13 @@ func printMetrics(m *metrics, elapsed time.Duration) {
 	}
 }
 
-func latencyStats(latencies []time.Duration) (min, max, p50, p95, p99 time.Duration) {
+func latencyStats(latencies []time.Duration) (minDur, maxDur, p50, p95, p99 time.Duration) {
 	if len(latencies) == 0 {
 		return
 	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-	min = latencies[0]
-	max = latencies[len(latencies)-1]
+	minDur = latencies[0]
+	maxDur = latencies[len(latencies)-1]
 	p50 = percentile(latencies, 0.50)
 	p95 = percentile(latencies, 0.95)
 	p99 = percentile(latencies, 0.99)
@@ -214,8 +220,17 @@ func buildTeamGet(ctx context.Context, _ uint64) (*http.Request, error) {
 
 func buildTeamAdd(ctx context.Context, iter uint64) (*http.Request, error) {
 	name := fmt.Sprintf("loadteam-%d-%d", runID, atomic.AddUint64(&teamSeq, 1))
-	body := fmt.Sprintf(`{"team_name":"%s","members":[{"user_id":"%s-u1","username":"Member","is_active":true}]}`, name, name)
-	return newJSONRequest(ctx, http.MethodPost, baseURL+"/team/add", body)
+	payload := map[string]any{
+		"team_name": name,
+		"members": []map[string]any{
+			{"user_id": name + "-u1", "username": "Member", "is_active": true},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return newJSONRequest(ctx, http.MethodPost, baseURL+"/team/add", string(body))
 }
 
 func buildPRCreate(ctx context.Context, _ uint64) (*http.Request, error) {
@@ -238,8 +253,18 @@ func buildMixed(ctx context.Context, iter uint64) (*http.Request, error) {
 }
 
 func ensureBaseTeam(client *http.Client) error {
-	body := fmt.Sprintf(`{"team_name":"%s","members":[{"user_id":"u1","username":"Alice","is_active":true},{"user_id":"u2","username":"Bob","is_active":true}]}`, baseTeamName)
-	req, err := newJSONRequest(context.Background(), http.MethodPost, baseURL+"/team/add", body)
+	payload := map[string]any{
+		"team_name": baseTeamName,
+		"members": []map[string]any{
+			{"user_id": "u1", "username": "Alice", "is_active": true},
+			{"user_id": "u2", "username": "Bob", "is_active": true},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := newJSONRequest(context.Background(), http.MethodPost, baseURL+"/team/add", string(body))
 	if err != nil {
 		return err
 	}
