@@ -1,0 +1,26 @@
+# Binaries and build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+coverage.out
+*.cov
+*.cover
+*.log
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Generated vendor/cache
+vendor/
+go.work
+
+# Temporary
+*.tmp
+*.bak
+*.swp
